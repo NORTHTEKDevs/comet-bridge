@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Comet Bridge",
+  "version": "0.3.0",
+  "description": "Claude-initiated Perplexity research bridge (pull-only, localhost).",
+  "permissions": ["tabs", "scripting", "storage", "alarms"],
+  "host_permissions": [
+    "<all_urls>",
+    "http://127.0.0.1:8787/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["inspect.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}

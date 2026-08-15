@@ -1,0 +1,7 @@
+{
+  "name": "comet-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": { "test": "node --test", "relay": "node relay/server.js" },
+  "devDependencies": { "jsdom": "^24.0.0" }
+}

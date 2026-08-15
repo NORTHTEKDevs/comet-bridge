@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.*
+*.token
+secret*
+relay/bridge.token
+extension/config.js
+.firecrawl/
+.worktrees
+# secrets - never commit
+audit.key
+audit.pub
+*.audit.jsonl
+.comet-mcp/
