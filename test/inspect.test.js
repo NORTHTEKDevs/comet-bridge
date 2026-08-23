@@ -162,6 +162,44 @@ test('redactSecrets replaces credential-shaped substrings with [REDACTED]', () =
   assert.equal(redactSecrets('plain text with no secrets'), 'plain text with no secrets');
 });
 
+test('redaction happens BEFORE truncation - no token fragment survives the boundary', () => {
+  const doc = makeDoc('<html><body></body></html>');
+  // Unprefixed high-entropy token positioned so truncate-first leaves only its first 19 chars
+  // visible - under the 20-char scoring floor, so no detector matches the orphaned fragment.
+  // (A prefixed key would keep its sk-/ghp_ marker in any fragment and self-redact either way.)
+  const maxLen = 100;
+  const token = 'QwErTyUiOpAsDfGhJkL1234567890zxCvBnM';
+  const prefix = 'ab '.repeat(27);              // exactly 81 chars, prose-like, ends in a space
+  assert.equal(prefix.length + 19, maxLen);         // 19 chars of the token survive the cut
+  const out = buildInspection(doc, {
+    kinds: ['console'], consoleEntries: [prefix + token], maxLen
+  });
+  assert.ok(out.console[0].indexOf('[REDACTED]') !== -1, 'token was not redacted at all');
+  assert.ok(out.console[0].indexOf('QwErTyUiOpAsDfGhJkL') === -1, 'truncation left a visible token fragment');
+});
+
+test('a token wrapped across a line break is redacted as one run, not two short fragments', () => {
+  // Each half is 12 chars - under the 20-char floor on its own, so truncate-era detectors left
+  // both fragments; egress.ts's wrapTolerant merges them into one qualifying run.
+  const r = redactSecrets('blob AbCdEfGhIj12\nMnOpQrSt9876 end');
+  assert.ok(r.indexOf('[REDACTED]') !== -1, 'wrapped token not redacted');
+  assert.ok(r.indexOf('AbCdEfGhIj12') === -1 && r.indexOf('MnOpQrSt9876') === -1, 'wrap fragments leaked');
+});
+test('an assignment value spanning a line break leaves no low-entropy residue', () => {
+  // Old behavior: value match stopped at the newline, and the leftover tail was too low-entropy
+  // for any other detector to catch.
+  const r = redactSecrets('password: hunter2\naaaaaaaaabbbbbbbbbbcccc');
+  assert.ok(r.indexOf('bbbbbbbbbb') === -1, 'post-wrap value residue leaked');
+});
+test('a card number wrapped across a line break is caught by the digit-run check', () => {
+  const r = redactSecrets('card 4532015112\n830366 charge');
+  assert.ok(r.indexOf('4532015112') === -1, 'wrapped card number leaked');
+});
+test('entropy scoring ignores absorbed line breaks - plain prose stays visible', () => {
+  const r = redactSecrets('filler\naaaaaaaaaabbbbbbbbbbccccccccccc');
+  assert.ok(r.indexOf('aaaaaaaaaa') !== -1, 'low-entropy wrapped run was falsely redacted');
+});
+
 test('assignment redaction normalizes hyphen/underscore/camelCase compound field names', () => {
   const cases = [
     'session_token=short1',

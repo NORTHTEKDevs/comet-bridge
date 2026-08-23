@@ -40,13 +40,18 @@ function collectVisibleText(node, buf) {
 
 function buildReaderState(doc, opts) {
   const maxText = (opts && opts.maxText) || 20000;
+  // Redaction is applied by the caller-supplied redactor (inspect.js's redactSecrets, injected
+  // into the same isolated world by background.js) so this path shares ONE pattern table with
+  // the inspect path. Callers MUST redact BEFORE truncating: truncation can slice a token in
+  // half at the boundary, leaving an orphaned fragment no detector matches anymore.
+  const redact = (opts && typeof opts._redact === 'function') ? opts._redact : (s => s);
   const els = [];
   let ref = 0;
   for (const el of doc.querySelectorAll(INTERACTIVE)) {
     const tag = el.tagName.toLowerCase();
     const type = el.getAttribute && el.getAttribute('type');
     const e = { ref: ref++, tag, role: el.getAttribute && el.getAttribute('role') || null,
-                name: accName(el), type: type || null };
+                name: redact(accName(el)), type: type || null };
     if (tag === 'input' || tag === 'textarea' || tag === 'select') {
       e.value_present = !!(el.value && String(el.value).length);   // boolean only, never the value
     }
@@ -58,10 +63,10 @@ function buildReaderState(doc, opts) {
   }
   const buf = [];
   if (doc.body) collectVisibleText(doc.body, buf);
-  const bodyText = buf.join(' ').replace(/\s+/g, ' ').trim().slice(0, maxText);
+  const bodyText = redact(buf.join(' ').replace(/\s+/g, ' ').trim()).slice(0, maxText);
   return {
     url: (doc.location && doc.location.href) || (doc.defaultView && doc.defaultView.location.href) || '',
-    title: doc.title || '',
+    title: redact(doc.title || ''),
     elements: els,
     content: bodyText
   };

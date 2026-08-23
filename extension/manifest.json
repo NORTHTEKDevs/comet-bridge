@@ -3,10 +3,9 @@
   "name": "Comet Bridge",
   "version": "0.3.0",
   "description": "Claude-initiated Perplexity research bridge (pull-only, localhost).",
-  "permissions": ["tabs", "scripting", "storage", "alarms"],
+  "permissions": ["tabs", "scripting", "alarms"],
   "host_permissions": [
-    "<all_urls>",
-    "http://127.0.0.1:8787/*"
+    "<all_urls>"
   ],
   "background": { "service_worker": "background.js" },
   "content_scripts": [

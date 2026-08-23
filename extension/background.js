@@ -13,13 +13,27 @@ chrome.runtime.onInstalled.addListener(startPolling);
 chrome.runtime.onStartup.addListener(startPolling);
 chrome.alarms.onAlarm.addListener(a => { if (a.name === 'poll') poll(); });
 
+// Exponential backoff on poll failures (network error, non-200, malformed body): each consecutive
+// failure doubles the wait (1s -> 60s cap); any successful poll resets it. The alarm still fires
+// on its fixed period - backoff just makes early fires no-ops - so the MV3 alarm lifecycle is
+// untouched and recovery needs no re-registration.
+let backoffUntil = 0;
+let backoffMs = 0;
+function tripBackoff() {
+  backoffMs = Math.min(backoffMs ? backoffMs * 2 : 1000, 60000);
+  backoffUntil = Date.now() + backoffMs;
+}
+
 async function poll() {
+  if (Date.now() < backoffUntil) return;
   let res;
   try {
     res = await fetch(`${C.RELAY}/jobs/next`, { headers: { 'x-bridge-token': C.RELAY_TOKEN } });
-  } catch { return; }
-  if (res.status !== 200) return;
-  const job = await res.json();
+  } catch { tripBackoff(); return; }
+  if (res.status !== 200) { if (res.status >= 500) tripBackoff(); return; }
+  let job;
+  try { job = await res.json(); } catch { tripBackoff(); return; }
+  backoffMs = 0; // success resets the backoff ladder
   await handle(job);
 }
 
@@ -40,10 +54,17 @@ async function ensureTab() {
 async function handleRead(job) {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab) return { error: 'no_active_tab' };
-  await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['reader.js'] });
+  // inspect.js is injected first so its redactSecrets (the ONE canonical pattern table, shared
+  // with the inspect path) is defined in this isolated world; buildReaderState picks it up via
+  // opts._redact and applies it BEFORE any truncation. Fail CLOSED if the symbol is missing
+  // (rename/renumber drift): returning unredacted page text would be the worse outcome.
+  await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['inspect.js', 'reader.js'] });
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    func: () => buildReaderState(document)
+    func: o => {
+      if (typeof redactSecrets !== 'function') throw new Error('redactSecrets unavailable - reader redaction boundary missing');
+      return buildReaderState(document, { ...o, _redact: redactSecrets });
+    }
   });
   return result;
 }
@@ -163,9 +184,13 @@ async function handle(job) {
   } catch (e) {
     error = String((e && e.message) || e);
   }
-  await fetch(`${C.RELAY}/jobs/${job.id}/result`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-bridge-token': C.RELAY_TOKEN },
-    body: JSON.stringify(error ? { error } : { result })
-  });
+  // A dead/malformed relay must not throw an unhandled rejection inside the service worker -
+  // the job stays claimed and expires back into the queue instead.
+  try {
+    await fetch(`${C.RELAY}/jobs/${job.id}/result`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-bridge-token': C.RELAY_TOKEN },
+      body: JSON.stringify(error ? { error } : { result })
+    });
+  } catch { /* job lease expiry requeues it */ }
 }

@@ -17,41 +17,57 @@ const COMPUTED_STYLE_ALLOWLIST = [
   'display', 'visibility', 'position', 'width', 'height', 'zIndex', 'opacity'
 ];
 
-// Ported from comet-mcp/src/egress.ts `looksLikeCredential`, kept as ONE exported constant so the
-// pattern table is reviewable and testable in isolation. The assignment pattern accepts an OPTIONAL
-// compounding prefix (`session_token=`, `authToken=`, `MY_API_KEY=`) with an optional hyphen/
-// underscore separator before the keyword, and matches the keyword itself case-insensitively -
-// so a joined field name is not silently missed the way Phase 4's literal-only pattern was
-// (`delete-account` evading a `delete account` match). A bare "keyword=value" (no prefix) still
-// matches because the prefix group is itself optional.
+// Ported from comet-mcp/src/egress.ts, kept as ONE exported constant so the pattern table is
+// reviewable and testable in isolation. The two copies are SEMANTIC TWINS - same charsets,
+// thresholds and wrap-tolerance behavior - not byte-identical text; change BOTH or neither.
+//
+// wrapTolerant mirrors egress.ts exactly: a chat-panel word-wrap can split a long token across a
+// line break, leaving each half under a detector's own length/entropy threshold. The char-class
+// run absorbs a single \r?\n ONLY when a character from the same charset immediately follows it
+// (the lookahead), so a newline is absorbed only between two token-shaped characters.
+function wrapTolerant(charClass, quantifier) {
+  return `(?:${charClass}|\\r?\\n(?=${charClass}))${quantifier}`;
+}
+
 const CREDENTIAL_PATTERNS = {
   // Vendor-specific token prefixes. NO \b anchor: comet-mcp's twin uses `s.includes(prefix)`, so a
   // word-glued occurrence like `mysk-test123` is caught there but was MISSED here - the two copies
   // had drifted apart on exactly the boundary-anchor question that has bitten this codebase before.
-  prefixed: /(sk-|nvapi-|ghp_|AKIA|xox)[A-Za-z0-9_-]*/g,
+  // Continuation charset matches comet-mcp's PREFIX_TOKEN_RE ([A-Za-z0-9+/=_.-]) - the narrower
+  // [A-Za-z0-9_-] left base64 tails ("+/==") as unredacted residue after the prefix match.
+  prefixed: new RegExp(`(?:sk-|nvapi-|ghp_|AKIA|xox)${wrapTolerant('[A-Za-z0-9+/=_.-]', '*')}`, 'g'),
   pem: /-----BEGIN[\s\S]*?-----END[^\n-]*-----/g,
-  // The optional-PREFIX-only form still missed the keyword appearing anywhere else in a compound
-  // identifier: `tokenSecretValue=`, `my_password_field=` and `apiSecret=` all leaked in full
-  // (verified 2026-08-14 against the built comet-mcp twin, which had the same defect). Allow
-  // identifier characters on BOTH sides of the keyword and broaden the keyword set - `secret` was
-  // missing entirely. Kept byte-for-byte in step with comet-mcp/src/egress.ts's ASSIGNMENT_RE: two
-  // copies of a pattern table is exactly how coverage drifts, so change BOTH or neither.
+  // Allow identifier characters on BOTH sides of the keyword and keep the keyword set broad -
+  // `secret` was missing entirely once and compound names (`tokenSecretValue=`) leaked in full.
+  // Kept in step with comet-mcp/src/egress.ts's ASSIGNMENT_RE: two copies of a pattern table is
+  // exactly how coverage drifts, so change BOTH or neither.
+  // The identifier runs are BOUNDED at {0,64}: an unbounded greedy `*` before the keyword
+  // alternation is QUADRATIC on keyword-free input (every split point retried per start
+  // position) - measured 62s on a 200KB string, and this runs over full untruncated page text,
+  // where that freezes the tab. Real compound identifiers are far shorter than 64 chars.
   // Value captures a quoted string in full, or up to 6 whitespace-separated tokens when unquoted -
-  // a `\S+` value stopped at the first space, so a multi-word passphrase
-  // ("password: correct horse battery staple") leaked all but its first word. Bounded on purpose:
-  // capturing to end-of-line would destroy a whole minified JS line in inspect output.
-  assignment: /[A-Za-z0-9_.[\]"'-]*(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|credential|authorization|private[_-]?key|access[_-]?key)[A-Za-z0-9_.[\]"'-]*\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;!?]+(?:[ \t]+[^\s,;!?-][^\s,;!?]*){0,5})/gi,
-  // Continuous base64/hex-charset run, no whitespace break (mirrors egress.ts CANDIDATE_TOKEN_RE).
-  candidateToken: /[A-Za-z0-9+/=_-]{20,}/g,
+  // bounded on purpose: capturing to end-of-line would destroy a whole minified JS line in inspect
+  // output. The unquoted value run is wrap-tolerant so a word-wrapped passphrase is one match.
+  assignment: new RegExp(
+    `[A-Za-z0-9_.[\\]"'-]{0,64}(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|credential|authorization|private[_-]?key|access[_-]?key)[A-Za-z0-9_.[\\]"'-]{0,64}\\s*[:=]\\s*`
+    + `(?:"[^"\\r\\n]*"|'[^'\\r\\n']*'|${wrapTolerant('[^\\s,;!?]', '+')}(?:[ \\t]+[^\\s,;!?-][^\\s,;!?]*){0,5})`,
+    'gi'
+  ),
+  // Continuous base64/hex-charset run, tolerant of a single wrap-induced line break (mirrors
+  // egress.ts CANDIDATE_TOKEN_RE).
+  candidateToken: new RegExp(wrapTolerant('[A-Za-z0-9+/=_-]', '+'), 'g'),
   // Continuous digit run (mirrors egress.ts DIGIT_RUN_RE).
-  digitRun: /\d{13,}/g
+  digitRun: new RegExp(wrapTolerant('\\d', '+'), 'g')
 };
 
 function isHighEntropyToken(tok) {
-  if (tok.length < 20) return false;
-  const hasDigit = /[0-9]/.test(tok);
-  const hasAlpha = /[A-Za-z]/.test(tok);
-  const uniqueChars = new Set(tok).size;
+  // Strip any wrap-induced line break absorbed by wrapTolerant before scoring - the newline is
+  // not part of the real secret and must not count toward length or unique-char entropy.
+  const clean = tok.replace(/[\r\n]/g, '');
+  if (clean.length < 20) return false;
+  const hasDigit = /[0-9]/.test(clean);
+  const hasAlpha = /[A-Za-z]/.test(clean);
+  const uniqueChars = new Set(clean).size;
   return hasDigit && hasAlpha && uniqueChars >= 8;
 }
 
@@ -90,6 +106,8 @@ function maybeRedact(text, opts) {
   return (opts && opts.noRedact) ? s : redactSecrets(s);
 }
 
+// Callers MUST redact before truncating (truncate(maybeRedact(x))) - truncation can slice a token
+// in half at the boundary, leaving an orphaned fragment that no detector matches anymore.
 function truncate(s, opts) {
   if (typeof s !== 'string') return s;
   const maxLen = (opts && typeof opts.maxLen === 'number' && opts.maxLen > 0) ? opts.maxLen : DEFAULT_MAX_LEN;
@@ -103,7 +121,7 @@ function buildScripts(doc, opts) {
     const src = el.getAttribute('src');
     const entry = { url: maybeRedact(src, opts) };
     if (Object.prototype.hasOwnProperty.call(scriptTexts, src)) {
-      entry.text = maybeRedact(truncate(scriptTexts[src], opts), opts);
+      entry.text = truncate(maybeRedact(scriptTexts[src], opts), opts);
     }
     out.push(entry);
   }
@@ -118,7 +136,7 @@ function buildStyles(doc, opts) {
   }
   const inline = [];
   for (const el of doc.querySelectorAll('style')) {
-    inline.push(maybeRedact(truncate(el.textContent || '', opts), opts));
+    inline.push(truncate(maybeRedact(el.textContent || '', opts), opts));
   }
   return { links, inline };
 }
@@ -127,7 +145,7 @@ function buildResources(entries, opts) {
   const list = Array.isArray(entries) ? entries : [];
   const maxEntries = (opts && opts.maxResourceEntries) || 200;
   return list.slice(0, maxEntries).map(e => ({
-    name: maybeRedact(truncate(String((e && e.name) || ''), opts), opts),
+    name: truncate(maybeRedact(String((e && e.name) || ''), opts), opts),
     initiatorType: (e && e.initiatorType) || '',
     duration: (e && typeof e.duration === 'number') ? e.duration : 0,
     transferSize: (e && typeof e.transferSize === 'number') ? e.transferSize : 0
@@ -153,7 +171,7 @@ function buildComputed(doc, opts) {
 function buildConsole(entries, opts) {
   const list = Array.isArray(entries) ? entries : [];
   const maxEntries = (opts && opts.maxConsoleEntries) || 200;
-  return list.slice(-maxEntries).map(e => maybeRedact(truncate(String(e), opts), opts));
+  return list.slice(-maxEntries).map(e => truncate(maybeRedact(String(e), opts), opts));
 }
 
 function buildInspection(doc, opts) {
@@ -166,7 +184,7 @@ function buildInspection(doc, opts) {
   for (const kind of kinds) {
     if (kind === 'source') {
       const html = doc.documentElement ? doc.documentElement.outerHTML : '';
-      out.source = maybeRedact(truncate(html, opts), opts);
+      out.source = truncate(maybeRedact(html, opts), opts);
     } else if (kind === 'scripts') {
       out.scripts = buildScripts(doc, opts);
     } else if (kind === 'styles') {
