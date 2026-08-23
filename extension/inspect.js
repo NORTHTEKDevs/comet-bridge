@@ -84,8 +84,11 @@ function luhnValid(digits) {
 }
 
 function isNumericSecret(run) {
-  if (run.length >= 15) return true;
-  return run.length >= 13 && run.length <= 19 && luhnValid(run);
+  // Strip wrap-induced line breaks before length/Luhn scoring - the mcp twin does this and a
+  // LF-split 13-digit card ("42222222222\n22") leaked raw here until the strip was added.
+  const digits = run.replace(/[\r\n]/g, '');
+  if (digits.length >= 15) return true;
+  return digits.length >= 13 && digits.length <= 19 && luhnValid(digits);
 }
 
 // Exported so the pattern table is independently testable, matching egress.ts's own convention.
