@@ -1,13 +1,13 @@
 # Comet Bridge - Design
 
 Date: 2026-06-13
-Owner: Northtek (Northtek)
+Owner: Northtek
 Status: APPROVED (design) - ready for build plan
 
 ## Purpose
 
 Give Claude Code a pipe into Perplexity's brain through the Comet browser, so Claude can
-call Perplexity as a research tool on the operator's Pro account at $0 marginal cost, and (if
+call Perplexity as a research tool on the operator's own Pro account at $0 marginal cost, and (if
 verifiable) hand agentic browsing tasks to Comet's assistant.
 
 This is NOT a generic browser customization. It exists only to do what the existing
@@ -19,8 +19,8 @@ This is NOT a generic browser customization. It exists only to do what the exist
 ## Hard constraints (from user)
 
 - **Pull-only, Claude-initiated.** No background watching. No live mirror of activity.
-- **No auto-capture.** Nothing pulled is saved anywhere - kernel included - unless the operator
-  explicitly says "save this." Personal lookups stay personal.
+- **No auto-capture.** Nothing pulled is saved anywhere - downstream memory included - unless the
+  operator explicitly says "save this." Personal lookups stay personal.
 - **Never touch existing browsing/threads.** Dispatched queries run in their own dedicated tab;
   the user's normal history and Spaces are never read or polluted.
 
@@ -30,7 +30,7 @@ This is NOT a generic browser customization. It exists only to do what the exist
 - IN (gated): #2 Agentic task handoff to Comet's assistant - only after a Phase-0 spike proves
   the agent surface is DOM-drivable; otherwise fall back to Ghost CDP, or shelve.
 - OUT: #3 live thread/context mirror. Explicitly rejected (privacy).
-- OUT: auto-persistence to the cognitive kernel.
+- OUT: auto-persistence to any downstream memory store.
 
 ## Architecture
 

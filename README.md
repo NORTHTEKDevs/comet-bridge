@@ -15,7 +15,7 @@ you have open. Three job types run through the same relay:
 ## Principles (hard constraints)
 
 - **Pull-only, Claude-initiated.** No background watching. No live mirror of your activity.
-- **No auto-capture.** Nothing pulled is saved anywhere (kernel included) unless you explicitly say so.
+- **No auto-capture.** Nothing pulled is saved anywhere (downstream memory included) unless you explicitly say so.
 - **Never touches your existing threads.** Dispatched `query` jobs run in their own dedicated tab.
 - **Localhost-only + token + locked CORS.** The relay binds `127.0.0.1`, requires a shared secret,
   and only accepts CORS from the extension origin.
@@ -182,3 +182,7 @@ active tab is on, under the same pull-only, Claude-initiated principle above - t
 watch tabs on its own; it only acts when a job is waiting in the relay queue. Redaction in `inspect`
 jobs is a heuristic pattern match, not a guarantee - see comet-mcp's README "Phase 6" section for the
 full honest-limits discussion of what it can and cannot catch.
+
+## License
+
+Apache-2.0. © Northtek. Use it, fork it, build on it.
